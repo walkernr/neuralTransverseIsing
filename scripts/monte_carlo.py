@@ -31,7 +31,7 @@ def parse_args():
     parser.add_argument('-rn', '--restart_name', help='restart dump simulation name',
                         type=str, default='ising_init')
     parser.add_argument('-rs', '--restart_step', help='restart dump start step',
-                        type=int, default=512)
+                        type=int, default=128)
     parser.add_argument('-q', '--queue', help='job submission queue',
                         type=str, default='jobqueue')
     parser.add_argument('-a', '--allocation', help='job submission allocation',
@@ -53,19 +53,19 @@ def parse_args():
     parser.add_argument('-nm', '--name', help='simulation name',
                         type=str, default='init')
     parser.add_argument('-n', '--lattice_sites', help='lattice sites',
-                        type=int, default=27)
+                        type=int, default=9)
     parser.add_argument('-t', '--time_slices', help='time slices',
-                        type=int, default=81)
+                        type=int, default=27)
     parser.add_argument('-j', '--interaction', help='interaction j',
                         type=float, default=1.0)
     parser.add_argument('-hn', '--field_number', help='number of external fields',
                         type=int, default=16)
     parser.add_argument('-hr', '--field_range', help='field range (low and high)',
-                        type=float, nargs=2, default=[0.1, 8.1])
+                        type=float, nargs=2, default=[0.1, 4.1])
     parser.add_argument('-tn', '--temperature_number', help='number of temperatures',
                         type=int, default=16)
     parser.add_argument('-tr', '--temperature_range', help='temperature range (low and high)',
-                        type=float, nargs=2, default=[0.1, 8.1])
+                        type=float, nargs=2, default=[0.1, 4.1])
     parser.add_argument('-sc', '--sample_cutoff', help='sample recording cutoff',
                         type=int, default=128)
     parser.add_argument('-sn', '--sample_number', help='number of samples to generate',
@@ -324,11 +324,11 @@ def init_samples():
 # ----------------
 
 
+@nb.jit
 def spin_flip_mc(config, k, c, nts, nas):
     ''' spin flip monte carlo '''
-    i, j = np.unravel_index(k, (NH, NT), order='C')
+    i, j = unravel(k, NT)
     nts += 1
-    ener, _ = extract(config, k)
     u, v, w = c
     s = config[u, v, w]
     nn = JXY[i, j]*(config[(u-1)%N, v, w]+config[(u+1)%N, v, w]+config[u, (v-1)%N, w]+config[u, (v+1)%N, w])+\
@@ -342,9 +342,10 @@ def spin_flip_mc(config, k, c, nts, nas):
     return config, nts, nas
 
 
+@nb.jit
 def total_spin_flip_mc(config, k):
     ''' spin flip monte carlo '''
-    i, j = np.unravel_index(k, (NH, NT), order='C')
+    i, j = unravel(k, NT)
     ener, _ = extract(config, k)
     nener, _ = extract(-1*config, k)
     de = nener-ener
@@ -358,16 +359,22 @@ def total_spin_flip_mc(config, k):
 # ---------------------
 
 
+@nb.jit
+def gen_sample_loop(config, k, cs, nts, nas):
+    for c in cs:
+        config, nts, nas = spin_flip_mc(config, k, c, nts, nas)
+    if np.random.rand() < 0.25:
+        config *= -1
+    return config, nts, nas
+
+
 def gen_sample(k, state):
     ''' generates a monte carlo sample '''
     config = state[0]
     nts, nas = 0., 0.
     # loop through monte carlo moves
     cs = np.random.permutation(list(it.product(np.arange(N), np.arange(N), np.arange(P))))
-    for c in cs:
-        config, nts, nas = spin_flip_mc(config, k, c, nts, nas)
-    if np.random.rand() < 0.5:
-        config = total_spin_flip_mc(config, k)
+    config, nts, nas = gen_sample_loop(config, k, cs, nts, nas)
     # extract system properties
     ener, mag = extract(config, k)
     # acceptation ratio
